@@ -1,41 +1,42 @@
-import flet as ft
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives import padding, serialization, asymmetric
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.backends import default_backend
 import os
+import sys
 
-def encrypt_file(file_path, rsa_public_key_pem, output_dir="C:\\Users\\PROGRAMADOR\\Documents\\EncryptedFiles"):
+
+def encrypt_file(file_path, rsa_public_key_pem, output_dir):
     try:
-        # Ensure output directory exists
+        # Asegurar que el directorio de salida exista
         os.makedirs(output_dir, exist_ok=True)
 
-        # Step 1: Extract file extension
+        # Paso 1: Extraer la extensión del archivo
         filename = os.path.basename(file_path)
-        extension = os.path.splitext(filename)[1]  # e.g., '.pdf'
+        extension = os.path.splitext(filename)[1]
         extension_bytes = extension.encode('utf-8')
         extension_length = len(extension_bytes)
         extension_length_bytes = extension_length.to_bytes(4, byteorder='big')
 
-        # Step 2: Read file content
+        # Paso 2: Leer el contenido del archivo
         with open(file_path, 'rb') as f:
             file_content = f.read()
 
-        # Step 3: Generate AES key and IV
-        aes_key = os.urandom(32)  # 256-bit key
-        iv = os.urandom(16)       # 16-byte IV
+        # Paso 3: Generar clave AES e IV
+        aes_key = os.urandom(32)  # Clave de 256 bits
+        iv = os.urandom(16)  # IV de 16 bytes
 
-        # Step 4: Encrypt file with AES-256-CBC
+        # Paso 4: Encriptar archivo con AES-256-CBC
         padder = padding.PKCS7(128).padder()
         padded_data = padder.update(file_content) + padder.finalize()
         cipher = Cipher(algorithms.AES(aes_key), modes.CBC(iv), backend=default_backend())
         encryptor = cipher.encryptor()
         encrypted_content = encryptor.update(padded_data) + encryptor.finalize()
 
-        # Step 5: Combine elements
+        # Paso 5: Combinar elementos
         final_encrypted_file = extension_length_bytes + extension_bytes + iv + encrypted_content
 
-        # Step 6: Encrypt AES key with RSA
+        # Paso 6: Encriptar clave AES con RSA
         public_key = serialization.load_pem_public_key(rsa_public_key_pem.encode('utf-8'), backend=default_backend())
         encrypted_aes_key = public_key.encrypt(
             aes_key,
@@ -46,9 +47,11 @@ def encrypt_file(file_path, rsa_public_key_pem, output_dir="C:\\Users\\PROGRAMAD
             )
         )
 
-        # Step 7: Save encrypted files
-        encrypted_file_path = os.path.join(output_dir, f"{filename}.enc")
-        key_file_path = os.path.join(output_dir, f"{filename}.key")
+        # Paso 7: Guardar archivos encriptados
+        relative_path = os.path.relpath(file_path, os.path.dirname(file_path))
+        encrypted_file_path = os.path.join(output_dir, f"{relative_path}.enc")
+        key_file_path = os.path.join(output_dir, f"{relative_path}.key")
+        os.makedirs(os.path.dirname(encrypted_file_path), exist_ok=True)
         with open(encrypted_file_path, 'wb') as f:
             f.write(final_encrypted_file)
         with open(key_file_path, 'wb') as f:
@@ -58,77 +61,67 @@ def encrypt_file(file_path, rsa_public_key_pem, output_dir="C:\\Users\\PROGRAMAD
     except Exception as e:
         return None, None, str(e)
 
-def main(page: ft.Page):
-    page.window_width = 400  # Reducido a 400 píxeles para un ancho más estrecho
-    page.title = "File Encryption Tool"
-    page.padding = 20
-    page.bgcolor = ft.Colors.BLACK
-    page.window_height = 600  # Ajustado para mantener proporcionalidad
 
-    # UI Elements
-    file_path_label = ft.Text("No file selected", color=ft.Colors.WHITE, size=14)  # Cambiado a blanco para contraste
-    rsa_key_input = ft.TextField(label="RSA Public Key (PEM)", multiline=True, height=150, width=350, max_lines=10, min_lines=5, color=ft.Colors.GREEN, border_color=ft.Colors.GREEN)
-    status_label = ft.Text("", color=ft.Colors.RED)
-    pick_file_button = ft.ElevatedButton("Select File", color=ft.Colors.BLUE, icon=ft.Icons.FILE_OPEN_SHARP, width=120, height=40, style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)))
-    encrypt_button = ft.ElevatedButton("Encriptar Archivo", disabled=True, color=ft.Colors.GREEN, icon=ft.Icons.LOCK, width=250, height=40, style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)))
+def encrypt_folder(folder_path, rsa_public_key_pem, output_dir):
+    results = []
+    for root, _, files in os.walk(folder_path):
+        for file_name in files:
+            file_path = os.path.join(root, file_name)
+            print(f"🔄 Procesando: {file_path}")
+            encrypted_file, key_file, error = encrypt_file(file_path, rsa_public_key_pem, output_dir)
+            results.append((file_path, encrypted_file, key_file, error))
+    return results
 
-    # File Picker
-    file_picker = ft.FilePicker()
 
-    def on_file_picked(e: ft.FilePickerResultEvent):
-        if e.files:
-            file_path_label.value = e.files[0].path
-            encrypt_button.disabled = not (file_path_label.value and rsa_key_input.value)
-        else:
-            file_path_label.value = "No file selected"
-            encrypt_button.disabled = True
-        page.update()
+def main():
+    print("🔒 Herramienta de Encriptación de Carpetas 🗂️")
 
-    file_picker.on_result = on_file_picked
-    pick_file_button.on_click = lambda e: file_picker.pick_files(allow_multiple=False)
+    # Solicitar rutas al usuario
+    folder_path = input("📁 Ingrese la ruta de la carpeta a encriptar: ").strip()
+    if not os.path.isdir(folder_path):
+        print("❌ Error: La ruta de la carpeta no es válida.")
+        return
 
-    def on_encrypt_click(e):
-        if file_path_label.value == "No file selected" or not rsa_key_input.value:
-            status_label.value = "Por favor, selecciona un archivo y proporciona una clave pública RSA."
-            page.update()
-            return
+    output_dir = input("📂 Ingrese la ruta del directorio de salida: ").strip()
+    if not output_dir:
+        print("❌ Error: Debe especificar un directorio de salida.")
+        return
 
-        encrypted_file, key_file, error = encrypt_file(file_path_label.value, rsa_key_input.value)
+    rsa_key_path = input("🔑 Ingrese la ruta del archivo de clave pública RSA (.pem): ").strip()
+    if not os.path.isfile(rsa_key_path) or not rsa_key_path.endswith('.pem'):
+        print("❌ Error: La ruta del archivo de clave RSA no es válida o no es un archivo .pem.")
+        return
+
+    # Leer la clave RSA
+    try:
+        with open(rsa_key_path, 'r') as f:
+            rsa_public_key_pem = f.read()
+    except Exception as e:
+        print(f"❌ Error al leer el archivo de clave RSA: {str(e)}")
+        return
+
+    # Encriptar carpeta
+    print("\n🚀 Iniciando encriptación...")
+    results = encrypt_folder(folder_path, rsa_public_key_pem, output_dir)
+
+    # Mostrar resultados
+    success_count = 0
+    error_messages = []
+    for file_path, encrypted_file, key_file, error in results:
         if error:
-            status_label.value = f"Error al encriptar: {error}"
-            status_label.color = ft.Colors.RED
+            error_messages.append(f"❌ Error al encriptar {file_path}: {error}")
         else:
-            status_label.value = f"¡Éxito! Archivos guardados:\n{encrypted_file}\n{key_file}"
-            status_label.color = ft.Colors.GREEN
-        page.update()
+            success_count += 1
+            print(f"✅ Éxito: {file_path} -> {encrypted_file}, clave: {key_file}")
 
-    def on_rsa_key_change(e):
-        encrypt_button.disabled = not (file_path_label.value != "No file selected" and rsa_key_input.value)
-        page.update()
+    if error_messages:
+        print(f"\n🎉 Encriptados {success_count} archivos con éxito.")
+        print("⚠️ Errores encontrados:")
+        for error in error_messages:
+            print(error)
+    else:
+        print(f"\n🎉 ¡Éxito! Se encriptaron {success_count} archivos correctamente.")
 
-    rsa_key_input.on_change = on_rsa_key_change
-    encrypt_button.on_click = on_encrypt_click
-
-    # Add FilePicker to page overlay
-    page.overlay.append(file_picker)
-
-    # Layout
-    page.add(
-        
-        ft.Column(
-            controls=[
-                ft.Text("Herramienta de Encriptación de Archivos", color=ft.Colors.WHITE, size=20, weight=ft.FontWeight.BOLD),
-                pick_file_button,
-                file_path_label,
-                rsa_key_input,
-                encrypt_button,
-                status_label
-            ],
-            alignment=ft.MainAxisAlignment.CENTER,
-            spacing=20,
-            horizontal_alignment=ft.CrossAxisAlignment.CENTER
-        )
-    )
 
 if __name__ == "__main__":
-    ft.app(target=main)
+    main()
